@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="org.mapper.PersonMapper">
+    <resultMap id="personResultMap" type="org.entity.Person">
+        <id column="id" property="id"/>
+        <result column="name" property="name"/>
+        <result column="age" property="age"/>
+        <result column="home_address" property="homeAddress"/>
+        <result column="company_address" property="companyAddress"/>
+    </resultMap>
+    <delete id="deletePersonById" parameterType="Integer">
+        DELETE FROM person WHERE id = #{id}
+    </delete>
+    <select id="selectPersonById" parameterType="Integer" resultMap="personResultMap">
+        SELECT * FROM person WHERE id = #{id}
+    </select>
+    <select id="selectPersonsByName" parameterType="String" resultMap="personResultMap">
+        SELECT * FROM person WHERE name = #{name}
+    </select>
+    <select id="selectPersonsByAge" parameterType="Integer" resultMap="personResultMap">
+        SELECT * FROM person WHERE age = #{age}
+    </select>
+    <select id="selectPersonsByHomeAddress" parameterType="String" resultMap="personResultMap">
+        SELECT * FROM person WHERE home_address = #{homeAddress}
+    </select>
+    <select id="selectPersonsByCompanyAddress" parameterType="String" resultMap="personResultMap">
+        SELECT * FROM person WHERE company_address = #{companyAddress}
+    </select>
+    <insert id="insertPerson" parameterType="Person">
+        INSERT INTO person VALUES (#{id}, #{name}, #{age}, #{homeAddress}, #{companyAddress})
+    </insert>
+    <update id="updatePerson" parameterType="Person">
+        UPDATE person SET name = #{name}, age = #{age}, home_address = #{homeAddress}, company_address = #{companyAddress} WHERE id = #{id}
+    </update>
+</mapper>

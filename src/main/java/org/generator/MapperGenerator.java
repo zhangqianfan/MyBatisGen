@@ -2,6 +2,7 @@ package org.generator;
 
 import com.sun.org.apache.xerces.internal.jaxp.DocumentBuilderFactoryImpl;
 import org.annotation.PrimaryKey;
+import org.utils.GeneratorUtils;
 import org.w3c.dom.*;
 import javax.xml.parsers.DocumentBuilder;
 import javax.xml.parsers.DocumentBuilderFactory;
@@ -13,6 +14,7 @@ import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.lang.reflect.Field;
+import java.sql.SQLException;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -23,17 +25,25 @@ import static javax.xml.transform.OutputKeys.*;
 
 public final class MapperGenerator {
 
+    /** 指定Mapper路径 */
     private final static String MAPPER_PATH = "src/main/java/org/mapper/";
+    /** 指定XML缩进字符个数 */
     private final static int XML_INDENT = 4;
+    /** 存储实体类对应的Mapper方法声明列表 */
     private final static HashMap<String, List<String>> mapperMethods = new HashMap<>();
 
     private MapperGenerator() {}
 
+    /** 创建单参数方法声明类 */
     private static class MethodDeclaration {
 
+        /** 方法名 */
         private final String methodName;
+        /** 参数名 */
         private final String parameterName;
+        /** 参数类型 */
         private final String parameterType;
+        /** 返回值类型 */
         private final String resultType;
 
         public MethodDeclaration(String methodName, String parameterName, String parameterType, String resultType) {
@@ -53,10 +63,6 @@ public final class MapperGenerator {
 
         public String getParameterType() {
             return parameterType;
-        }
-
-        public String getResultType() {
-            return resultType;
         }
 
         @Override
@@ -82,6 +88,12 @@ public final class MapperGenerator {
 
     }
 
+    /**
+     * 生成Mapper接口java文件
+     * @param entityClass 要生成Mapper接口的实体类
+     * @return 生成成功返回true，否则返回false
+     * @throws IOException 当发生I/O异常时抛出
+     */
     public static boolean generateMapperJavaFile(Class<?> entityClass) throws IOException {
         String entityClassName = entityClass.getSimpleName();
         String mapperClassName = entityClassName + "Mapper";
@@ -117,7 +129,7 @@ public final class MapperGenerator {
                          || field.getType() == Character.class
                          || field.getType() == Boolean.class
                          || field.getType() == String.class) {
-                            if (field.getName().endsWith("id") || field.getName().endsWith("Id") || field.getName().endsWith("ID")) {
+                            if (field.getName().toLowerCase().endsWith("id")) {
                                 mapperMethodDeclarations.add("int delete" + entityClassName + "By" + toCamelString(field.getName()) + "(" + field.getType().getSimpleName() + " " + field.getName() + ");");
                                 mapperMethodDeclarations.add(entityClassName + " select" + entityClassName + "By" + toCamelString(field.getName()) + "(" + field.getType().getSimpleName() + " " + field.getName() + ");");
                             } else {
@@ -145,6 +157,7 @@ public final class MapperGenerator {
 
         DocumentBuilderFactory builderFactory = new DocumentBuilderFactoryImpl();
         try {
+            Field[] fields = entityClass.getDeclaredFields();
             DocumentBuilder builder = builderFactory.newDocumentBuilder();
             Document document = builder.newDocument();
             Element mapperElement = document.createElement("mapper");
@@ -157,31 +170,53 @@ public final class MapperGenerator {
             int len = mapperMethodsList.size();
             Element[] sqlElement = new Element[len];
             String sqlTableName = entityClass.getSimpleName().toLowerCase();
+            // 在<mapper>标签中添加ResultMap
+            Element resultMap = document.createElement("resultMap");
+            String resultMapId = entityClass.getSimpleName().toLowerCase() + "ResultMap";
+            resultMap.setAttribute("id", resultMapId);
+            resultMap.setAttribute("type", entityClass.getName());
+            int pkNum = 0;
+            for (Field f : fields) {
+                PrimaryKey pk = f.getAnnotation(PrimaryKey.class);
+                Element elemId;
+                if (pk != null) {
+                    elemId = document.createElement("id");
+                    pkNum++;
+                } else {
+                    elemId = document.createElement("result");
+                }
+                // 约束每个实体只能有一个主键
+                if (pkNum > 1) {
+                    throw new SQLException("Table corresponding to entity class must have only one primary key, but found " + pkNum);
+                }
+                elemId.setAttribute("property", f.getName());
+                elemId.setAttribute("column", GeneratorUtils.fieldNameToColName(f.getName()));
+                resultMap.appendChild(elemId);
+            }
+            mapperElement.appendChild(resultMap);
+            // 在<mapper>标签中添加<select>, <insert>, <update>, <delete>标签
             for (int i = 0; i < len; i++) {
                 String mapperMethod = mapperMethodsList.get(i);
                 MethodDeclaration declaration = parseSingleParamMethodDeclaration(mapperMethod);
                 String methodName = declaration.getMethodName();
                 String parameterName = declaration.getParameterName();
                 String parameterType = declaration.getParameterType();
-                String resultType = declaration.getResultType();
                 if (methodName.startsWith("select")) {
+                    // <select>标签
                     sqlElement[i] = document.createElement("select");
                     sqlElement[i].setAttribute("id", methodName);
                     sqlElement[i].setAttribute("parameterType", parameterType);
-                    if (resultType.contains("List")) {
-                        int i1 = resultType.lastIndexOf('<');
-                        int i2 = resultType.lastIndexOf('>');
-                        resultType = resultType.substring(i1 + 1, i2);
-                    }
-                    sqlElement[i].setAttribute("resultType", resultType);
-                    Text textNode = document.createTextNode("SELECT * FROM " + sqlTableName + " WHERE " + parameterName + " = #{" + parameterName + "}");
+                    sqlElement[i].setAttribute("resultMap", resultMapId);
+                    Text textNode = document.createTextNode("SELECT * FROM " + sqlTableName + " WHERE " + GeneratorUtils.fieldNameToColName(parameterName) + " = #{" + parameterName + "}");
+                    sqlElement[i].appendChild(document.createTextNode("\n" + GeneratorUtils.generateNbsp(2 * XML_INDENT)));
                     sqlElement[i].appendChild(textNode);
+                    sqlElement[i].appendChild(document.createTextNode("\n" + GeneratorUtils.generateNbsp(XML_INDENT)));
                 } else if (methodName.startsWith("insert")) {
-                    Field[] fields = entityClass.getDeclaredFields();
+                    // <insert>标签
                     StringBuilder tempBuilder = new StringBuilder();
                     tempBuilder.append("INSERT INTO ").append(sqlTableName).append(" VALUES (");
                     for (Field f : fields) {
-                        tempBuilder.append("#{").append(f.getName().toLowerCase()).append("}, ");
+                        tempBuilder.append("#{").append(f.getName()).append("}, ");
                     }
                     tempBuilder.delete(tempBuilder.lastIndexOf(", "), tempBuilder.length());
                     tempBuilder.append(')');
@@ -189,39 +224,49 @@ public final class MapperGenerator {
                     sqlElement[i].setAttribute("id", methodName);
                     sqlElement[i].setAttribute("parameterType", parameterType);
                     Text textNode = document.createTextNode(tempBuilder.toString());
+                    sqlElement[i].appendChild(document.createTextNode("\n" + GeneratorUtils.generateNbsp(2 * XML_INDENT)));
                     sqlElement[i].appendChild(textNode);
+                    sqlElement[i].appendChild(document.createTextNode("\n" + GeneratorUtils.generateNbsp(XML_INDENT)));
                 } else if (methodName.startsWith("update")) {
-                    Field[] fields = entityClass.getDeclaredFields();
+                    // <update>标签
                     StringBuilder tempBuilder = new StringBuilder();
                     tempBuilder.append("UPDATE ").append(entityClass.getSimpleName().toLowerCase()).append(" SET ");
                     String primaryKeyName = "";
-                    int cnt = 0;
+                    pkNum = 0;
                     for (Field f : fields) {
                         PrimaryKey pkAnnotation = f.getAnnotation(PrimaryKey.class);
                         if (pkAnnotation == null) {
-                            tempBuilder.append(f.getName().toLowerCase()).append(" = #{").append(f.getName().toLowerCase()).append("}, ");
+                            tempBuilder.append(GeneratorUtils.fieldNameToColName(f.getName())).append(" = #{").append(f.getName()).append("}, ");
                         } else {
-                            cnt++;
-                            primaryKeyName = f.getName();
+                            pkNum++;
+                            primaryKeyName = GeneratorUtils.fieldNameToColName(f.getName());
                         }
                     }
                     // 约束每个实体类只能有1个主键
-                    if (cnt > 1) return false;
+                    if (pkNum > 1) {
+                        throw new SQLException("Table corresponding to entity class must have only one primary key, but found " + pkNum);
+                    }
                     tempBuilder.delete(tempBuilder.lastIndexOf(", "), tempBuilder.length());
-                    tempBuilder.append(" WHERE ").append(primaryKeyName).append("= #{").append(primaryKeyName).append("}");
+                    tempBuilder.append(" WHERE ").append(primaryKeyName).append(" = #{").append(primaryKeyName).append("}");
                     sqlElement[i] = document.createElement("update");
                     sqlElement[i].setAttribute("id", methodName);
                     sqlElement[i].setAttribute("parameterType", parameterType);
                     Text textNode = document.createTextNode(tempBuilder.toString());
+                    sqlElement[i].appendChild(document.createTextNode("\n" + GeneratorUtils.generateNbsp(2 * XML_INDENT)));
                     sqlElement[i].appendChild(textNode);
+                    sqlElement[i].appendChild(document.createTextNode("\n" + GeneratorUtils.generateNbsp(XML_INDENT)));
                 } else if (methodName.startsWith("delete")) {
+                    // <delete>标签
                     sqlElement[i] = document.createElement("delete");
                     sqlElement[i].setAttribute("id", methodName);
                     sqlElement[i].setAttribute("parameterType", parameterType);
                     Text textNode = document.createTextNode("DELETE FROM " + sqlTableName + " WHERE " + parameterName + " = #{" + parameterName + "}");
+                    sqlElement[i].appendChild(document.createTextNode("\n" + GeneratorUtils.generateNbsp(2 * XML_INDENT)));
                     sqlElement[i].appendChild(textNode);
+                    sqlElement[i].appendChild(document.createTextNode("\n" + GeneratorUtils.generateNbsp(XML_INDENT)));
                 }
             }
+
             for (int i = 0; i < len; i++) {
                 mapperElement.appendChild(sqlElement[i]);
             }

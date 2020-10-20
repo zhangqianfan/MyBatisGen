@@ -5,7 +5,11 @@
 
 <configuration>
     
-    <properties resource="classpath:db.properties"/>
+    <properties resource="db.properties"/>
+
+    <settings>
+        <setting name="logImpl" value="LOG4J"/>
+    </settings>
 
     <typeAliases>
         <package name="org.entity"/>
